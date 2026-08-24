@@ -5,8 +5,11 @@ const fs = require('fs');
 const path = require('path');
 const express = require('express');
 
-// Auto-detect Chromium path for Replit
-let puppeteerConfig = {
+// Delete problematic env var that puppeteer reads directly
+delete process.env.PUPPETEER_EXECUTABLE_PATH;
+
+// Simple puppeteer config - let it use bundled chromium or system
+const puppeteerConfig = {
     headless: true,
     args: [
         '--no-sandbox',
@@ -20,53 +23,28 @@ let puppeteerConfig = {
     ]
 };
 
-// On Replit, use system chromium
-if (process.env.REPLIT || process.env.PUPPETEER_EXECUTABLE_PATH) {
-    let chromiumPath = null;
-    
-    // Try to find chromium in nix store
+// Try to use system chromium on Replit (without env var)
+if (process.env.REPLIT) {
     try {
         const nixStore = '/nix/store';
         if (fs.existsSync(nixStore)) {
             const dirs = fs.readdirSync(nixStore);
             const chromiumDir = dirs.find(d => d.includes('chromium'));
             if (chromiumDir) {
-                chromiumPath = path.join(nixStore, chromiumDir, 'bin', 'chromium');
+                const chromiumPath = path.join(nixStore, chromiumDir, 'bin', 'chromium');
+                if (fs.existsSync(chromiumPath)) {
+                    puppeteerConfig.executablePath = chromiumPath;
+                    console.log(`🌐 Using system Chromium: ${chromiumPath}`);
+                }
             }
         }
-    } catch (e) {}
-    
-    // Filter out glob patterns (literal * paths from unexpanded secrets)
-    const chromiumPaths = [
-        process.env.PUPPETEER_EXECUTABLE_PATH,
-        chromiumPath,
-        '/usr/bin/chromium',
-        '/usr/bin/chromium-browser',
-        '/usr/bin/google-chrome',
-        '/usr/bin/google-chrome-stable'
-    ].filter(p => p && !p.includes('*') && !p.includes('?'));
-    
-    for (const p of chromiumPaths) {
-        try {
-            if (fs.existsSync(p)) {
-                puppeteerConfig.executablePath = p;
-                console.log(`🌐 Using Chromium: ${p}`);
-                break;
-            }
-        } catch (e) {}
-    }
-    
-    // If still no chromium found, try puppeteer's bundled chromium (skip - async at module level)
-    // Just don't set executablePath and let puppeteer use its bundled chromium
-    if (!puppeteerConfig.executablePath) {
-        console.log('⚠️ No system chromium found, letting puppeteer use bundled chromium');
+    } catch (e) {
+        console.log('⚠️ Using bundled chromium');
     }
 }
 
-const BOT_PHONE_NUMBER = '923XXXXXXXXX';
-const ADMIN_NUMBERS = [`${BOT_PHONE_NUMBER}@c.us`];
+const ADMIN_NUMBERS = ['923XXXXXXXXX@c.us'];
 const BOT_PREFIX = '.';
-const USE_PAIR_CODE = true;
 
 const client = new Client({
     authStrategy: new LocalAuth({ clientId: 'bot-session' }),
@@ -109,36 +87,23 @@ async function playSong(chat, query) {
 client.on('qr', (qr) => {
     qrcode.generate(qr, { small: true });
     console.log('📱 Scan QR code above to login');
-    if (USE_PAIR_CODE) {
-        console.log('🔗 Or use Pair Code: Run `node pair.js` separately');
-    }
 });
 
 client.on('authenticated', () => {
     console.log('🔐 Authenticated successfully');
 });
 
-client.on('pair_code', (code) => {
-    console.log('\n🔗 ===== PAIR CODE =====');
-    console.log(`📱 Pair Code: ${code}`);
-    console.log('📲 Open WhatsApp → Linked Devices → Link with Phone Number');
-    console.log(`📞 Enter: ${BOT_PHONE_NUMBER}`);
-    console.log('========================\n');
-});
-
 client.on('ready', () => {
     console.log('✅ Bot is ready!');
-    console.log('🤖 Features active: Anti-link, Admin Kick, Music Play');
+    console.log('🤖 Features: Anti-link, Admin Kick, Music Play');
 });
 
 client.on('disconnected', (reason) => {
-    console.log('🔌 Client disconnected:', reason);
-    console.log('🔄 Attempting to reconnect...');
+    console.log('🔌 Disconnected:', reason);
 });
 
 client.on('auth_failure', (msg) => {
     console.error('❌ Auth failure:', msg);
-    console.log('🔄 Please re-scan QR code or regenerate pair code');
 });
 
 client.on('message', async (msg) => {
@@ -147,18 +112,12 @@ client.on('message', async (msg) => {
         const senderId = msg.author || msg.from;
         const body = msg.body.trim();
         
-        if (chat.isGroup) {
-            if (isGroupLink(body)) {
-                if (!isAdmin(senderId)) {
-                    try {
-                        await msg.delete(true);
-                        await chat.sendMessage(`@${senderId.split('@')[0]} ❌ Group links are not allowed!`, { mentions: [senderId] });
-                    } catch (e) {
-                        console.log('Could not delete link message');
-                    }
-                }
-                return;
-            }
+        if (chat.isGroup && isGroupLink(body) && !isAdmin(senderId)) {
+            try {
+                await msg.delete(true);
+                await chat.sendMessage(`@${senderId.split('@')[0]} ❌ Group links not allowed!`, { mentions: [senderId] });
+            } catch (e) {}
+            return;
         }
         
         if (!body.startsWith(BOT_PREFIX)) return;
@@ -168,70 +127,45 @@ client.on('message', async (msg) => {
         
         switch (command) {
             case 'kick':
-                if (!isAdmin(senderId)) {
-                    await msg.reply('❌ Only admins can use this command!');
-                    return;
-                }
-                
-                if (!chat.isGroup) {
-                    await msg.reply('❌ This command only works in groups!');
-                    return;
-                }
+                if (!isAdmin(senderId)) return await msg.reply('❌ Admins only!');
+                if (!chat.isGroup) return await msg.reply('❌ Groups only!');
                 
                 const mentionedIds = msg.mentionedIds;
-                if (mentionedIds.length === 0) {
-                    await msg.reply('❌ Mention users to kick! Usage: .kick @user1 @user2');
-                    return;
-                }
+                if (!mentionedIds.length) return await msg.reply('❌ Mention users: .kick @user');
                 
                 for (const userId of mentionedIds) {
                     try {
                         await chat.removeParticipants([userId]);
                         await msg.reply(`✅ Kicked @${userId.split('@')[0]}`, { mentions: [userId] });
                     } catch (e) {
-                        await msg.reply(`❌ Failed to kick @${userId.split('@')[0]} (Bot needs admin rights)`, { mentions: [userId] });
+                        await msg.reply(`❌ Failed to kick @${userId.split('@')[0]} (need admin)`, { mentions: [userId] });
                     }
                 }
                 break;
                 
             case 'play':
             case 'p':
-                if (args.length === 0) {
-                    await msg.reply('🎵 Usage: .play <song name or YouTube link>\nExample: .play shape of you');
-                    return;
-                }
-                const query = args.join(' ');
-                await playSong(chat, query);
+                if (!args.length) return await msg.reply('🎵 Usage: .play <song name>');
+                await playSong(chat, args.join(' '));
                 break;
                 
             case 'help':
             case 'menu':
-                const helpText = `🤖 *Bot Commands*
+                await msg.reply(`🤖 *Bot Commands*
                 
-*Admin Commands:*
-.kick @user - Remove user from group (admin only)
+*Admin:* .kick @user
+*Music:* .play <song> | .p <song>
+*Auto:* Removes group links (non-admins)
 
-*Music Commands:*
-.play <song name/link> - Play song from YouTube
-.p <song name/link> - Shortcut for play
-
-*Auto Features:*
-🔗 Auto-removes group invite links (non-admins)
-✅ Bot must be admin for kick to work
-
-*Setup:*
-1. Add bot to group
-2. Make bot admin for kick feature
-3. Add your number to ADMIN_NUMBERS in code`;
-                await msg.reply(helpText);
+*Setup:* Add bot to group → Make admin → Edit ADMIN_NUMBERS in code`);
                 break;
                 
             case 'ping':
-                await msg.reply('🏓 Pong! Bot is active.');
+                await msg.reply('🏓 Pong!');
                 break;
         }
     } catch (error) {
-        console.error('Message handler error:', error);
+        console.error('Message error:', error);
     }
 });
 
@@ -240,19 +174,17 @@ client.on('group_join', async (notification) => {
         const chat = await notification.getChat();
         if (chat.isGroup) {
             const joiner = notification.recipientIds[0];
-            await chat.sendMessage(`Welcome @${joiner.split('@')[0]}! 👋\n\n*Rules:*\n• No group links allowed\n• Respect everyone\n• Use .help for commands`, { mentions: [joiner] });
+            await chat.sendMessage(`Welcome @${joiner.split('@')[0]}! 👋\n\nRules:\n• No group links\n• Respect everyone\n• .help for commands`, { mentions: [joiner] });
         }
-    } catch (error) {
-        console.error('Group join handler error:', error);
-    }
+    } catch (e) {}
 });
 
-// Express server for Replit/UptimeRobot keep-alive - with port fallback
+// Express server with port fallback
 const app = express();
 app.get('/', (req, res) => res.send('Bot is running!'));
 
 function startServer(port) {
-    return new Promise((resolve, reject) => {
+    return new Promise((resolve) => {
         const server = app.listen(port, () => {
             console.log(`🌐 Web server on port ${port}`);
             resolve(server);
@@ -261,33 +193,21 @@ function startServer(port) {
             if (err.code === 'EADDRINUSE') {
                 console.log(`⚠️ Port ${port} busy, trying ${port + 1}...`);
                 resolve(startServer(port + 1));
-            } else {
-                reject(err);
             }
         });
     });
 }
 
-const PORT = process.env.PORT || 3000;
-startServer(PORT).catch(err => console.error('Server error:', err));
+startServer(process.env.PORT || 3000);
 
-// Global error handlers - prevent crashes
-process.on('uncaughtException', (error) => {
-    console.error('💥 Uncaught Exception:', error);
-});
-
-process.on('unhandledRejection', (reason, promise) => {
-    console.error('💥 Unhandled Rejection at:', promise, 'reason:', reason);
-});
-
-process.on('warning', (warning) => {
-    console.warn('⚠️ Warning:', warning.name, warning.message);
-});
+// Global error handlers
+process.on('uncaughtException', (e) => console.error('💥 Uncaught:', e));
+process.on('unhandledRejection', (r) => console.error('💥 Rejection:', r));
 
 try {
     client.initialize();
-} catch (error) {
-    console.error('❌ Failed to initialize client:', error);
+} catch (e) {
+    console.error('❌ Init error:', e);
 }
 
 process.on('SIGINT', async () => {

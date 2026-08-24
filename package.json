@@ -6,7 +6,6 @@
   "scripts": {
     "start": "node index.js",
     "dev": "node index.js",
-    "pair": "node pair.js",
     "postinstall": "node -e \"console.log('Dependencies installed successfully')\""
   },
   "dependencies": {
