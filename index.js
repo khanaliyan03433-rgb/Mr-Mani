@@ -85,72 +85,83 @@ client.on('ready', () => {
     console.log('🤖 Features active: Anti-link, Admin Kick, Music Play');
 });
 
+client.on('disconnected', (reason) => {
+    console.log('🔌 Client disconnected:', reason);
+    console.log('🔄 Attempting to reconnect...');
+});
+
+client.on('auth_failure', (msg) => {
+    console.error('❌ Auth failure:', msg);
+    console.log('🔄 Please re-scan QR code or regenerate pair code');
+});
+
 client.on('message', async (msg) => {
-    const chat = await msg.getChat();
-    const senderId = msg.author || msg.from;
-    const body = msg.body.trim();
-    
-    if (chat.isGroup) {
-        if (isGroupLink(body)) {
-            if (!isAdmin(senderId)) {
-                try {
-                    await msg.delete(true);
-                    await chat.sendMessage(`@${senderId.split('@')[0]} ❌ Group links are not allowed!`, { mentions: [senderId] });
-                } catch (e) {
-                    console.log('Could not delete link message');
+    try {
+        const chat = await msg.getChat();
+        const senderId = msg.author || msg.from;
+        const body = msg.body.trim();
+        
+        if (chat.isGroup) {
+            if (isGroupLink(body)) {
+                if (!isAdmin(senderId)) {
+                    try {
+                        await msg.delete(true);
+                        await chat.sendMessage(`@${senderId.split('@')[0]} ❌ Group links are not allowed!`, { mentions: [senderId] });
+                    } catch (e) {
+                        console.log('Could not delete link message');
+                    }
                 }
+                return;
             }
-            return;
         }
-    }
-    
-    if (!body.startsWith(BOT_PREFIX)) return;
-    
-    const args = body.slice(BOT_PREFIX.length).trim().split(/ +/);
-    const command = args.shift().toLowerCase();
-    
-    switch (command) {
-        case 'kick':
-            if (!isAdmin(senderId)) {
-                await msg.reply('❌ Only admins can use this command!');
-                return;
-            }
-            
-            if (!chat.isGroup) {
-                await msg.reply('❌ This command only works in groups!');
-                return;
-            }
-            
-            const mentionedIds = msg.mentionedIds;
-            if (mentionedIds.length === 0) {
-                await msg.reply('❌ Mention users to kick! Usage: .kick @user1 @user2');
-                return;
-            }
-            
-            for (const userId of mentionedIds) {
-                try {
-                    await chat.removeParticipants([userId]);
-                    await msg.reply(`✅ Kicked @${userId.split('@')[0]}`, { mentions: [userId] });
-                } catch (e) {
-                    await msg.reply(`❌ Failed to kick @${userId.split('@')[0]} (Bot needs admin rights)`, { mentions: [userId] });
+        
+        if (!body.startsWith(BOT_PREFIX)) return;
+        
+        const args = body.slice(BOT_PREFIX.length).trim().split(/ +/);
+        const command = args.shift().toLowerCase();
+        
+        switch (command) {
+            case 'kick':
+                if (!isAdmin(senderId)) {
+                    await msg.reply('❌ Only admins can use this command!');
+                    return;
                 }
-            }
-            break;
-            
-        case 'play':
-        case 'p':
-            if (args.length === 0) {
-                await msg.reply('🎵 Usage: .play <song name or YouTube link>\nExample: .play shape of you');
-                return;
-            }
-            const query = args.join(' ');
-            await playSong(chat, query);
-            break;
-            
-        case 'help':
-        case 'menu':
-            const helpText = `🤖 *Bot Commands*
-            
+                
+                if (!chat.isGroup) {
+                    await msg.reply('❌ This command only works in groups!');
+                    return;
+                }
+                
+                const mentionedIds = msg.mentionedIds;
+                if (mentionedIds.length === 0) {
+                    await msg.reply('❌ Mention users to kick! Usage: .kick @user1 @user2');
+                    return;
+                }
+                
+                for (const userId of mentionedIds) {
+                    try {
+                        await chat.removeParticipants([userId]);
+                        await msg.reply(`✅ Kicked @${userId.split('@')[0]}`, { mentions: [userId] });
+                    } catch (e) {
+                        await msg.reply(`❌ Failed to kick @${userId.split('@')[0]} (Bot needs admin rights)`, { mentions: [userId] });
+                    }
+                }
+                break;
+                
+            case 'play':
+            case 'p':
+                if (args.length === 0) {
+                    await msg.reply('🎵 Usage: .play <song name or YouTube link>\nExample: .play shape of you');
+                    return;
+                }
+                const query = args.join(' ');
+                await playSong(chat, query);
+                break;
+                
+            case 'help':
+            case 'menu':
+                const helpText = `🤖 *Bot Commands*
+                
 *Admin Commands:*
 .kick @user - Remove user from group (admin only)
 
@@ -166,20 +177,27 @@ client.on('message', async (msg) => {
 1. Add bot to group
 2. Make bot admin for kick feature
 3. Add your number to ADMIN_NUMBERS in code`;
-            await msg.reply(helpText);
-            break;
-            
-        case 'ping':
-            await msg.reply('🏓 Pong! Bot is active.');
-            break;
+                await msg.reply(helpText);
+                break;
+                
+            case 'ping':
+                await msg.reply('🏓 Pong! Bot is active.');
+                break;
+        }
+    } catch (error) {
+        console.error('Message handler error:', error);
     }
 });
 
 client.on('group_join', async (notification) => {
-    const chat = await notification.getChat();
-    if (chat.isGroup) {
-        const joiner = notification.recipientIds[0];
-        await chat.sendMessage(`Welcome @${joiner.split('@')[0]}! 👋\n\n*Rules:*\n• No group links allowed\n• Respect everyone\n• Use .help for commands`, { mentions: [joiner] });
+    try {
+        const chat = await notification.getChat();
+        if (chat.isGroup) {
+            const joiner = notification.recipientIds[0];
+            await chat.sendMessage(`Welcome @${joiner.split('@')[0]}! 👋\n\n*Rules:*\n• No group links allowed\n• Respect everyone\n• Use .help for commands`, { mentions: [joiner] });
+        }
+    } catch (error) {
+        console.error('Group join handler error:', error);
     }
 });
 
@@ -189,7 +207,24 @@ app.get('/', (req, res) => res.send('Bot is running!'));
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => console.log(`🌐 Web server on port ${PORT}`));
 
-client.initialize();
+// Global error handlers - prevent crashes
+process.on('uncaughtException', (error) => {
+    console.error('💥 Uncaught Exception:', error);
+});
+
+process.on('unhandledRejection', (reason, promise) => {
+    console.error('💥 Unhandled Rejection at:', promise, 'reason:', reason);
+});
+
+process.on('warning', (warning) => {
+    console.warn('⚠️ Warning:', warning.name, warning.message);
+});
+
+try {
+    client.initialize();
+} catch (error) {
+    console.error('❌ Failed to initialize client:', error);
+}
 
 process.on('SIGINT', async () => {
     console.log('\n🛑 Shutting down...');
