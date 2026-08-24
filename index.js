@@ -5,6 +5,40 @@ const fs = require('fs');
 const path = require('path');
 const express = require('express');
 
+// Auto-detect Chromium path for Replit
+let puppeteerArgs = [
+    '--no-sandbox',
+    '--disable-setuid-sandbox',
+    '--disable-dev-shm-usage',
+    '--disable-accelerated-2d-canvas',
+    '--no-first-run',
+    '--no-zygote',
+    '--single-process',
+    '--disable-gpu'
+];
+
+// On Replit, use system chromium
+if (process.env.REPLIT || process.env.PUPPETEER_EXECUTABLE_PATH) {
+    const chromiumPaths = [
+        process.env.PUPPETEER_EXECUTABLE_PATH,
+        '/nix/store/$(ls /nix/store 2>/dev/null | grep chromium | head -1)/bin/chromium',
+        '/usr/bin/chromium',
+        '/usr/bin/chromium-browser',
+        '/usr/bin/google-chrome',
+        '/usr/bin/google-chrome-stable'
+    ].filter(Boolean);
+    
+    for (const p of chromiumPaths) {
+        try {
+            if (fs.existsSync(p)) {
+                puppeteerArgs.unshift(`--executable-path=${p}`);
+                console.log(`🌐 Using Chromium: ${p}`);
+                break;
+            }
+        } catch (e) {}
+    }
+}
+
 const BOT_PHONE_NUMBER = '923XXXXXXXXX';
 const ADMIN_NUMBERS = [`${BOT_PHONE_NUMBER}@c.us`];
 const BOT_PREFIX = '.';
@@ -14,16 +48,7 @@ const client = new Client({
     authStrategy: new LocalAuth({ clientId: 'bot-session' }),
     puppeteer: {
         headless: true,
-        args: [
-            '--no-sandbox',
-            '--disable-setuid-sandbox',
-            '--disable-dev-shm-usage',
-            '--disable-accelerated-2d-canvas',
-            '--no-first-run',
-            '--no-zygote',
-            '--single-process',
-            '--disable-gpu'
-        ]
+        args: puppeteerArgs
     }
 });
 
