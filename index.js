@@ -36,6 +36,7 @@ if (process.env.REPLIT || process.env.PUPPETEER_EXECUTABLE_PATH) {
         }
     } catch (e) {}
     
+    // Filter out glob patterns (literal * paths from unexpanded secrets)
     const chromiumPaths = [
         process.env.PUPPETEER_EXECUTABLE_PATH,
         chromiumPath,
@@ -43,7 +44,7 @@ if (process.env.REPLIT || process.env.PUPPETEER_EXECUTABLE_PATH) {
         '/usr/bin/chromium-browser',
         '/usr/bin/google-chrome',
         '/usr/bin/google-chrome-stable'
-    ].filter(Boolean);
+    ].filter(p => p && !p.includes('*') && !p.includes('?'));
     
     for (const p of chromiumPaths) {
         try {
@@ -53,6 +54,12 @@ if (process.env.REPLIT || process.env.PUPPETEER_EXECUTABLE_PATH) {
                 break;
             }
         } catch (e) {}
+    }
+    
+    // If still no chromium found, try puppeteer's bundled chromium (skip - async at module level)
+    // Just don't set executablePath and let puppeteer use its bundled chromium
+    if (!puppeteerConfig.executablePath) {
+        console.log('⚠️ No system chromium found, letting puppeteer use bundled chromium');
     }
 }
 
