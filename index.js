@@ -19,9 +19,23 @@ let puppeteerArgs = [
 
 // On Replit, use system chromium
 if (process.env.REPLIT || process.env.PUPPETEER_EXECUTABLE_PATH) {
+    let chromiumPath = null;
+    
+    // Try to find chromium in nix store
+    try {
+        const nixStore = '/nix/store';
+        if (fs.existsSync(nixStore)) {
+            const dirs = fs.readdirSync(nixStore);
+            const chromiumDir = dirs.find(d => d.includes('chromium'));
+            if (chromiumDir) {
+                chromiumPath = path.join(nixStore, chromiumDir, 'bin', 'chromium');
+            }
+        }
+    } catch (e) {}
+    
     const chromiumPaths = [
         process.env.PUPPETEER_EXECUTABLE_PATH,
-        '/nix/store/$(ls /nix/store 2>/dev/null | grep chromium | head -1)/bin/chromium',
+        chromiumPath,
         '/usr/bin/chromium',
         '/usr/bin/chromium-browser',
         '/usr/bin/google-chrome',
@@ -226,11 +240,29 @@ client.on('group_join', async (notification) => {
     }
 });
 
-// Express server for Replit/UptimeRobot keep-alive
+// Express server for Replit/UptimeRobot keep-alive - with port fallback
 const app = express();
 app.get('/', (req, res) => res.send('Bot is running!'));
+
+function startServer(port) {
+    return new Promise((resolve, reject) => {
+        const server = app.listen(port, () => {
+            console.log(`🌐 Web server on port ${port}`);
+            resolve(server);
+        });
+        server.on('error', (err) => {
+            if (err.code === 'EADDRINUSE') {
+                console.log(`⚠️ Port ${port} busy, trying ${port + 1}...`);
+                resolve(startServer(port + 1));
+            } else {
+                reject(err);
+            }
+        });
+    });
+}
+
 const PORT = process.env.PORT || 3000;
-app.listen(PORT, () => console.log(`🌐 Web server on port ${PORT}`));
+startServer(PORT).catch(err => console.error('Server error:', err));
 
 // Global error handlers - prevent crashes
 process.on('uncaughtException', (error) => {
